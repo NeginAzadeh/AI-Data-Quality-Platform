@@ -29,9 +29,9 @@ def main():
     except ValueError:
         raise SystemExit("The API response was not valid JSON.")
 
-    # Save relative to this script, regardless of the terminal's current folder.
+    # Resolve the project root above archive/weather_poc/.
     output_path = (
-        Path(__file__).resolve().parent
+        Path(__file__).resolve().parents[2]
         / "data"
         / "raw"
         / "turin_temperature_2026-09-01_to_2026-09-03.json"
