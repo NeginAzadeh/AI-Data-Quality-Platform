@@ -3,16 +3,20 @@
 ## Current GitHub pipeline
 
 ```text
-GitHub REST API (dbt-labs/dbt-core)
+GitHub REST API (dbt-labs/dbt-core and apache/airflow by default)
   -> src/engineering_intelligence/ingest_github.py
   -> data/raw/github/<timestamped snapshot>.json
 
 Mock API responses -> tests/test_github_ingestion.py
 ```
 
-The module fetches page 1 with up to 30 PRs across both states, sorted by creation time descending. It saves original PR objects with extraction metadata. This captures a snapshot, not complete GitHub history.
+The module follows GitHub next-page links with up to 30 PRs per page across both states, sorted by creation time descending. The configurable default maximum is 3 pages per repository. Each repository produces a separate snapshot with original PR objects, extraction metadata, per-page URLs and counts, and pagination completeness. Previous single-page snapshots remain unchanged.
 
-Fetching and saving are separate functions so network behavior can be tested offline. The command-line entry point coordinates them and reports errors. Rate limits stop execution with retry guidance. The GitHub flow has no database or scheduler yet.
+`check_response` handles HTTP and rate-limit errors; `fetch_pull_requests` collects bounded pages; `save_snapshot` writes new raw files; `ingest_repositories` isolates repositories; `main` parses command-line configuration and sets the exit code. These boundaries allow offline tests of network and storage failures.
+
+Successful pages survive later API failures. Failure metadata is saved even when no page succeeds. Save failures are reported separately, and remaining repositories are still attempted. Rate limits stop the affected repository with retry guidance, without automatic retries. API or save failures produce a nonzero exit code; reaching the page cap is an expected bounded extraction.
+
+Pagination is complete only when no next link remains. A cap, failure, or empty page with a next link is incomplete. Snapshots are not complete event history: PRs can change between page requests. The GitHub flow has no database or scheduler yet.
 
 ## Archived weather proof of concept
 
@@ -49,4 +53,4 @@ Airflow would coordinate tasks; Docker would package their runtime. GCP would ho
 - `data/processed/`: existing weather database and future generated outputs.
 - `docs/`: design documentation.
 
-Data and `.venv/` remain local through `.gitignore`. This reorganization adds documentation, not pipeline functionality.
+Data and `.venv/` remain local through `.gitignore`. The active implementation is limited to multi-repository GitHub ingestion; all downstream components remain planned.
