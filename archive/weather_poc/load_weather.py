@@ -7,7 +7,8 @@ import duckdb
 
 
 def main():
-    project_dir = Path(__file__).resolve().parent
+    # Keep using the original data directory at the project root.
+    project_dir = Path(__file__).resolve().parents[2]
     input_path = (
         project_dir / "data" / "raw"
         / "turin_temperature_2026-09-01_to_2026-09-03.json"
