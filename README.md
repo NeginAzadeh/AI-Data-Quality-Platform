@@ -16,9 +16,11 @@ Engineering teams need reliable information about how work moves from pull reque
 - Engineering warehouse in `src/engineering_intelligence/load_github.py` selects the latest metadata-valid snapshot per repository by embedded UTC extraction time and loads `data/processed/engineering.duckdb`.
 - `ingestion_runs` stores snapshot provenance, pagination completeness, extraction errors, and quality results. `pull_requests` stores validated PR fields and the newest extracted observation per repository/PR number.
 - Data Quality checks reject missing required fields, duplicate identifiers within a snapshot, invalid timestamps, and inconsistent lifecycle dates. Loading is transactional per snapshot and safe to rerun without duplicate PRs or runs.
+- SQL analytics under `sql/analytics/` calculates repository-level observed PR counts, state breakdowns, merge rate, average/median time to merge, and open PR ages at each PR's extraction time, including counts older than 7 days.
+- `report_kpis.py` reads the warehouse without modifying it, displays KPIs, and exports timestamped JSON under `data/reports/` with per-PR open ages, units/definitions, and ingestion completeness/error context. Controlled DuckDB tests check known results and edge cases.
 - Archived weather proof of concept: fetch Turin hourly temperatures and load them into DuckDB without duplicate timestamps. The scripts in `archive/weather_poc/` still use the existing project-level data files.
 
-GitHub ingestion is a snapshot, not complete history. Page-limited snapshots are explicitly incomplete, and the warehouse preserves that status. Even when pagination is exhausted, PRs can change during extraction and this endpoint does not provide every historical PR event. The warehouse stores current observed PR values, not every change over time. No AI agent or engineering KPIs are implemented yet.
+GitHub ingestion is a snapshot, not complete history. Page-limited snapshots are explicitly incomplete, and the warehouse preserves that status. Even when pagination is exhausted, PRs can change during extraction and this endpoint does not provide every historical PR event. The warehouse stores current observed PR values, not every change over time. KPIs describe this observed, potentially incomplete cohort; they are not full-repository performance statistics or developer productivity rankings. No AI agent is implemented yet.
 
 ## Run locally
 
@@ -27,6 +29,7 @@ From PowerShell in the project root, using the existing `.venv` with `requests` 
 ```powershell
 .\.venv\Scripts\python.exe .\src\engineering_intelligence\ingest_github.py
 .\.venv\Scripts\python.exe .\src\engineering_intelligence\load_github.py
+.\.venv\Scripts\python.exe .\src\engineering_intelligence\report_kpis.py
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
@@ -50,7 +53,9 @@ The warehouse loader uses existing snapshots and makes no API requests. It print
 
 Malformed files or invalid extraction metadata are reported and skipped; valid files can still load, but the command exits with code 1. Selection is among metadata-valid snapshots, so an older valid snapshot may be selected when a newer file is invalid; this is reported as a failure, not silently treated as a clean load. Rejections, metadata quality issues, database failures, and source extraction errors also produce code 1. Incomplete page-limited data by itself is expected and does not fail the loader.
 
-See [the warehouse guide](docs/warehouse.md) for the schema, upserts, quality policies, and SQL examples.
+See [the warehouse guide](docs/warehouse.md) for the schema, upserts, quality policies, and SQL examples. See [the analytics guide](docs/analytics.md) for KPI formulas, SQL explanations, JSON structure, and interpretation limits.
+
+The analytics script needs an existing warehouse with both tables. A valid empty warehouse produces an empty report; a repository with a run but no PRs has zero counts and unavailable (`null`) rates/durations. Generation time labels the output file only; it never affects open ages. `data/reports/` is excluded from Git, and reporting does not call GitHub or change raw snapshots, ingestion code, or warehouse tables.
 
 Optional archived weather commands:
 
@@ -65,7 +70,6 @@ Fetching weather again overwrites its raw JSON; loading reuses the database. Git
 
 | Component | Intended purpose |
 | --- | --- |
-| Engineering KPIs | Calculate clearly defined time-to-merge and PR throughput metrics |
 | Dashboard | Present engineering metrics and trends |
 | AI Agent | Explain patterns and suggest investigations using validated data |
 | GCP | Host cloud storage and pipeline workloads |
@@ -81,11 +85,13 @@ This is a learning roadmap, not an implemented production system. Exact cloud se
 
 ```text
 archive/weather_poc/          Preserved, runnable weather scripts
-src/engineering_intelligence/ GitHub ingestion and warehouse loader
-tests/                      Offline ingestion and warehouse tests
-docs/                       Architecture and warehouse guides
+src/engineering_intelligence/ Ingestion, warehouse loader, and KPI reporter
+sql/analytics/              Shared PR calculations and SQL report queries
+tests/                      Ingestion, warehouse, and analytics tests
+docs/                       Architecture, warehouse, and analytics guides
 data/raw/                   Original API responses (ignored by Git)
 data/processed/             Engineering and weather databases (ignored by Git)
+data/reports/               Generated KPI JSON reports (ignored by Git)
 README.md                   Purpose, status, and run commands
 .gitignore                  Local files excluded from Git
 ```

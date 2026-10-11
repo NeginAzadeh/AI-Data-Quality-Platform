@@ -9,6 +9,9 @@ GitHub REST API (dbt-labs/dbt-core and apache/airflow by default)
   -> load_github.py (latest snapshot selection and Data Quality checks)
   -> data/processed/engineering.duckdb
        ingestion_runs + pull_requests
+  -> sql/analytics/ (temporary calculations and read-only queries)
+  -> report_kpis.py
+  -> Console KPI summary + data/reports/<timestamped KPI report>.json
 
 Mock API responses -> tests/test_github_ingestion.py
 ```
@@ -40,11 +43,19 @@ Open-Meteo -> archive/weather_poc/fetch_weather.py
 
 Both scripts locate the project root with `Path(__file__).resolve().parents[2]`, preserving access to existing data regardless of the terminal's working directory. The loader checks list lengths and prevents duplicate timestamps using a primary key. This learning example is separate from the active GitHub pipeline.
 
+## Implemented analytics
+
+`sql/analytics/pr_observations.sql` defines a session-only view with one row per stored PR, elapsed merge time, and open age at that PR's own extraction timestamp. `repository_kpis.sql` aggregates by repository before joining the latest ingestion metadata, preventing count inflation from multiple runs. `open_pr_ages.sql` lists every observed open PR's age and its observation time.
+
+`report_kpis.py` uses a read-only connection and a transaction so both queries see the same warehouse state. The temporary view is not persisted. Python formats console output and exports structured JSON; SQL owns the KPI formulas. Report generation time is separate from metric inputs. The warehouse, raw files, and existing ingestion functions remain unchanged.
+
+Both latest ingestion context and contributing observation-run context are retained. Older PRs can remain after later bounded or failed extractions, so this is an observed cohort with potentially mixed extraction times, not a complete or simultaneous view of repository activity. See [the analytics guide](analytics.md) for definitions and SQL learning examples.
+
 ## Planned downstream pipeline (not implemented)
 
 ```text
-Existing validated DuckDB engineering tables
-  -> dbt transformations and Engineering KPIs
+Existing warehouse and SQL KPI report
+  -> dbt-managed transformations
   -> Dashboard and AI Agent
 ```
 
@@ -54,11 +65,13 @@ Airflow would coordinate tasks; Docker would package their runtime. GCP would ho
 
 ## Folder responsibilities
 
-- `src/engineering_intelligence/`: active ingestion and warehouse code.
-- `tests/`: mocked API tests and warehouse tests using temporary DuckDB databases.
+- `src/engineering_intelligence/`: ingestion, warehouse, and report code.
+- `sql/analytics/`: PR calculations and repository KPI queries.
+- `tests/`: mocked API tests and isolated DuckDB warehouse/analytics tests.
 - `archive/weather_poc/`: preserved and runnable learning example.
 - `data/raw/`: original API responses.
 - `data/processed/`: local engineering and weather databases.
+- `data/reports/`: generated KPI JSON, excluded from version control.
 - `docs/`: design documentation.
 
-Data and `.venv/` remain local through `.gitignore`. GitHub ingestion, basic Data Quality checks, and the local warehouse are implemented. KPIs, dbt, AI, dashboards, scheduling, and cloud infrastructure remain planned.
+Data and `.venv/` remain local through `.gitignore`. GitHub ingestion, basic Data Quality checks, the local warehouse, and observed-cohort KPIs are implemented. dbt, AI, dashboards, scheduling, and cloud infrastructure remain planned.
