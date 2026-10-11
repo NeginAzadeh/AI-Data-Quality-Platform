@@ -53,19 +53,39 @@ Both latest ingestion context and contributing observation-run context are retai
 
 ## Planned downstream pipeline (not implemented)
 
+The data-access foundation for a future AI Agent is now implemented separately from model integration; see below. The agent reasoning loop itself remains planned.
+
 ```text
 Existing warehouse and SQL KPI report
   -> dbt-managed transformations
   -> Dashboard and AI Agent
 ```
 
-The dashboard would present defined metrics. The AI Agent would explain patterns using validated results and suggest investigations. Neither is implemented.
+The dashboard would present defined metrics. A future AI Agent would call the tested tools to retrieve evidence, state its limits, and suggest questions for investigation. No dashboard or model reasoning loop is implemented.
+
+## Implemented agent tool foundation
+
+```text
+Trusted local caller (future LLM proposes name and JSON arguments)
+  -> tool_schemas.py + AgentTools.call_tool allowlist and runtime validation
+  -> Four fixed operations in agent_tools.py
+  -> Read-only DuckDB connection + existing checked-in analytics SQL
+  -> Structured data + provenance + freshness/quality + explicit limitations
+```
+
+The four operations are `get_repository_kpis`, `list_stale_open_prs`, `get_pr_details`, and `get_data_quality_status`. Inputs cannot choose SQL, SQL file paths, database paths, or additional operations. All input values passed to SQL are separate bound parameters. Database path and test clock are configured by trusted application code.
+
+Each call opens a read-only connection and uses one transaction for context and detail queries. Only session-local views reuse the existing KPI formulas; no warehouse changes are made. Stale PR listing has a validated result cap and supplies constructed GitHub PR references. Source text is untrusted data, never execution instructions.
+
+PR age stays reproducible at extraction. Source freshness is separately checked against an explicit current UTC timestamp and a 24-hour threshold. Latest ingestion metadata and contributing PR-run metadata are both exposed, so a recent failed attempt or clean later run cannot hide old observations or previous quality issues. Unknown metadata stays unknown. These tools never verify live GitHub status or infer review activity, root causes, or developer performance.
+
+Schemas are provider-neutral metadata for a later model adapter. No model SDK, paid service, credentials, billing dependency, agent loop, or network request is introduced. See [the agent tools guide](agent_tools.md).
 
 Airflow would coordinate tasks; Docker would package their runtime. GCP would host cloud resources, Terraform would define infrastructure, and CI/CD would automate checks and later delivery. Specific services, metric definitions, and deployment design remain undecided.
 
 ## Folder responsibilities
 
-- `src/engineering_intelligence/`: ingestion, warehouse, and report code.
+- `src/engineering_intelligence/`: ingestion, warehouse, reports, and bounded agent tools/schemas.
 - `sql/analytics/`: PR calculations and repository KPI queries.
 - `tests/`: mocked API tests and isolated DuckDB warehouse/analytics tests.
 - `archive/weather_poc/`: preserved and runnable learning example.
@@ -74,4 +94,4 @@ Airflow would coordinate tasks; Docker would package their runtime. GCP would ho
 - `data/reports/`: generated KPI JSON, excluded from version control.
 - `docs/`: design documentation.
 
-Data and `.venv/` remain local through `.gitignore`. GitHub ingestion, basic Data Quality checks, the local warehouse, and observed-cohort KPIs are implemented. dbt, AI, dashboards, scheduling, and cloud infrastructure remain planned.
+Data and `.venv/` remain local through `.gitignore`. GitHub ingestion, basic Data Quality checks, the warehouse, observed-cohort KPIs, and tested agent data tools are implemented. Model integration, dbt, dashboards, scheduling, and cloud infrastructure remain planned.
