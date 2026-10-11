@@ -13,9 +13,12 @@ Engineering teams need reliable information about how work moves from pull reque
 - New JSON snapshots in `data/raw/github/` preserve original PR objects plus repository, UTC extraction start/end times, source URL, record count, and per-page metadata.
 - Pagination metadata records completeness, successful page count, stop reason, and the next or failed page URL. Successful pages survive later request failures; first-page failures produce metadata snapshots with zero records.
 - Timeout, HTTP error, rate-limit, malformed response, and file-error handling, with offline mocked tests. Repositories are processed independently.
+- Engineering warehouse in `src/engineering_intelligence/load_github.py` selects the latest metadata-valid snapshot per repository by embedded UTC extraction time and loads `data/processed/engineering.duckdb`.
+- `ingestion_runs` stores snapshot provenance, pagination completeness, extraction errors, and quality results. `pull_requests` stores validated PR fields and the newest extracted observation per repository/PR number.
+- Data Quality checks reject missing required fields, duplicate identifiers within a snapshot, invalid timestamps, and inconsistent lifecycle dates. Loading is transactional per snapshot and safe to rerun without duplicate PRs or runs.
 - Archived weather proof of concept: fetch Turin hourly temperatures and load them into DuckDB without duplicate timestamps. The scripts in `archive/weather_poc/` still use the existing project-level data files.
 
-GitHub ingestion is a snapshot, not complete history. Page-limited snapshots are explicitly incomplete. Even when pagination is exhausted, PRs can change during extraction and this endpoint does not provide every historical PR event. DuckDB currently supports only the weather example, not engineering analytics. No AI agent is implemented yet.
+GitHub ingestion is a snapshot, not complete history. Page-limited snapshots are explicitly incomplete, and the warehouse preserves that status. Even when pagination is exhausted, PRs can change during extraction and this endpoint does not provide every historical PR event. The warehouse stores current observed PR values, not every change over time. No AI agent or engineering KPIs are implemented yet.
 
 ## Run locally
 
@@ -23,6 +26,7 @@ From PowerShell in the project root, using the existing `.venv` with `requests` 
 
 ```powershell
 .\.venv\Scripts\python.exe .\src\engineering_intelligence\ingest_github.py
+.\.venv\Scripts\python.exe .\src\engineering_intelligence\load_github.py
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
@@ -42,6 +46,12 @@ Pagination divides results into smaller responses. The code uses `requests` to p
 
 API rate limits restrict request volume. Unauthenticated public requests normally allow 60 requests per hour per IP address, with additional secondary limits. The script reports `Retry-After` or `X-RateLimit-Reset` when available and does not retry automatically. See [GitHub rate-limit documentation](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
 
+The warehouse loader uses existing snapshots and makes no API requests. It prints accepted records, actual rows inserted/updated, rejected records, and quality issues per repository. Rerunning unchanged snapshots normally reports zero rows inserted/updated. Invalid records remain in raw JSON; their reasons are also saved in `ingestion_runs.quality_issues`. Older single-page snapshots without pagination metadata have unknown completeness (`NULL`).
+
+Malformed files or invalid extraction metadata are reported and skipped; valid files can still load, but the command exits with code 1. Selection is among metadata-valid snapshots, so an older valid snapshot may be selected when a newer file is invalid; this is reported as a failure, not silently treated as a clean load. Rejections, metadata quality issues, database failures, and source extraction errors also produce code 1. Incomplete page-limited data by itself is expected and does not fail the loader.
+
+See [the warehouse guide](docs/warehouse.md) for the schema, upserts, quality policies, and SQL examples.
+
 Optional archived weather commands:
 
 ```powershell
@@ -55,8 +65,6 @@ Fetching weather again overwrites its raw JSON; loading reuses the database. Git
 
 | Component | Intended purpose |
 | --- | --- |
-| DuckDB | Store and query engineering data locally |
-| Data Quality | Check required fields, duplicates, and timestamp consistency |
 | Engineering KPIs | Calculate clearly defined time-to-merge and PR throughput metrics |
 | Dashboard | Present engineering metrics and trends |
 | AI Agent | Explain patterns and suggest investigations using validated data |
@@ -73,11 +81,11 @@ This is a learning roadmap, not an implemented production system. Exact cloud se
 
 ```text
 archive/weather_poc/          Preserved, runnable weather scripts
-src/engineering_intelligence/ Active GitHub ingestion module
-tests/                      Offline ingestion tests
-docs/architecture.md        Current design and planned evolution
+src/engineering_intelligence/ GitHub ingestion and warehouse loader
+tests/                      Offline ingestion and warehouse tests
+docs/                       Architecture and warehouse guides
 data/raw/                   Original API responses (ignored by Git)
-data/processed/             Existing weather database (ignored by Git)
+data/processed/             Engineering and weather databases (ignored by Git)
 README.md                   Purpose, status, and run commands
 .gitignore                  Local files excluded from Git
 ```
