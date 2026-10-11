@@ -35,6 +35,7 @@ dist/
 data/raw/
 data/interim/
 data/processed/
+data/reports/
 logs/
 *.log
 
