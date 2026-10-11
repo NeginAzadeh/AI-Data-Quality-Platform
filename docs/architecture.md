@@ -6,6 +6,9 @@
 GitHub REST API (dbt-labs/dbt-core and apache/airflow by default)
   -> src/engineering_intelligence/ingest_github.py
   -> data/raw/github/<timestamped snapshot>.json
+  -> load_github.py (latest snapshot selection and Data Quality checks)
+  -> data/processed/engineering.duckdb
+       ingestion_runs + pull_requests
 
 Mock API responses -> tests/test_github_ingestion.py
 ```
@@ -16,7 +19,15 @@ The module follows GitHub next-page links with up to 30 PRs per page across both
 
 Successful pages survive later API failures. Failure metadata is saved even when no page succeeds. Save failures are reported separately, and remaining repositories are still attempted. Rate limits stop the affected repository with retry guidance, without automatic retries. API or save failures produce a nonzero exit code; reaching the page cap is an expected bounded extraction.
 
-Pagination is complete only when no next link remains. A cap, failure, or empty page with a next link is incomplete. Snapshots are not complete event history: PRs can change between page requests. The GitHub flow has no database or scheduler yet.
+Pagination is complete only when no next link remains. A cap, failure, or empty page with a next link is incomplete. Snapshots are not complete event history: PRs can change between page requests. The warehouse preserves completeness metadata and never deletes PRs simply because they are absent from a later bounded snapshot. There is no scheduler yet.
+
+## Implemented warehouse
+
+`load_github.py` reads existing raw files without calling GitHub or modifying JSON. It selects the newest metadata-valid extraction per repository, validates records, and writes two DuckDB tables. Discovery, validation, schema creation, and loading are separate functions so tests can use temporary files and real isolated databases.
+
+`ingestion_runs` records one row per selected snapshot, identified by its SHA-256 content hash. `pull_requests` uses the composite primary key `(repository, pr_number)` and upserts only observations from a newer extraction. All warehouse timestamps are timezone-aware and normalized to UTC. Each snapshot's run metadata and PR changes commit together, or roll back together if database writes fail.
+
+Rejected records remain available in raw JSON, and their record indices, PR numbers, and reasons are recorded in run metadata. Missing pagination metadata means unknown completeness, not complete data. Invalid files are reported, while remaining valid repositories can load. The loader does not backfill all archived snapshots or maintain PR event history. See [the warehouse guide](warehouse.md) for schema and quality rules.
 
 ## Archived weather proof of concept
 
@@ -29,13 +40,10 @@ Open-Meteo -> archive/weather_poc/fetch_weather.py
 
 Both scripts locate the project root with `Path(__file__).resolve().parents[2]`, preserving access to existing data regardless of the terminal's working directory. The loader checks list lengths and prevents duplicate timestamps using a primary key. This learning example is separate from the active GitHub pipeline.
 
-## Planned pipeline (not implemented)
+## Planned downstream pipeline (not implemented)
 
 ```text
-Engineering source APIs
-  -> Raw snapshots
-  -> Data Quality checks
-  -> DuckDB engineering tables
+Existing validated DuckDB engineering tables
   -> dbt transformations and Engineering KPIs
   -> Dashboard and AI Agent
 ```
@@ -46,11 +54,11 @@ Airflow would coordinate tasks; Docker would package their runtime. GCP would ho
 
 ## Folder responsibilities
 
-- `src/engineering_intelligence/`: active ingestion code.
-- `tests/`: automated tests using mocked GitHub responses.
+- `src/engineering_intelligence/`: active ingestion and warehouse code.
+- `tests/`: mocked API tests and warehouse tests using temporary DuckDB databases.
 - `archive/weather_poc/`: preserved and runnable learning example.
 - `data/raw/`: original API responses.
-- `data/processed/`: existing weather database and future generated outputs.
+- `data/processed/`: local engineering and weather databases.
 - `docs/`: design documentation.
 
-Data and `.venv/` remain local through `.gitignore`. The active implementation is limited to multi-repository GitHub ingestion; all downstream components remain planned.
+Data and `.venv/` remain local through `.gitignore`. GitHub ingestion, basic Data Quality checks, and the local warehouse are implemented. KPIs, dbt, AI, dashboards, scheduling, and cloud infrastructure remain planned.
