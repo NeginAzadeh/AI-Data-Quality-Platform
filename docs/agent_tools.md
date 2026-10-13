@@ -4,7 +4,7 @@
 
 A tool is an ordinary program function with a defined purpose, inputs, and output. Our tools retrieve facts from the local warehouse. They are useful now, without an AI model.
 
-Later, a model will receive descriptions and JSON schemas for these operations. Instead of writing SQL, it can propose a function name and structured arguments, for example:
+The local Ollama Agent now receives descriptions and JSON schemas for these operations. Instead of writing SQL, it proposes a function name and structured arguments, for example:
 
 ```json
 {
@@ -17,7 +17,7 @@ Later, a model will receive descriptions and JSON schemas for these operations. 
 }
 ```
 
-The application, not the model, decides whether to execute it. `AgentTools.call_tool` checks the name against an allowlist, checks exact argument names, and invokes a function whose runtime validation checks values. The function executes fixed read-only queries. Its JSON-compatible result can later be returned to the model as evidence. No model or reasoning loop is connected in this milestone.
+The application, not the model, decides whether to execute it. `AgentTools.call_tool` checks the name against an allowlist, checks exact argument names, and invokes a function whose runtime validation checks values. The function executes fixed read-only queries. Its JSON-compatible result is returned to the model as untrusted evidence by the new bounded loop. The data tools themselves remain independent of models; see [the local Agent guide](local_agent.md).
 
 ## Available operations
 
@@ -105,6 +105,6 @@ print(json.dumps(tools.get_data_quality_status("apache/airflow"), indent=2))
 print(json.dumps(TOOL_SCHEMAS, indent=2))
 ```
 
-The tools use the already-installed DuckDB dependency and Python standard library. They make no network or model calls and need no API keys, billing account, paid service, local model, or new packages. Model selection remains the next milestone.
+The tools use the already-installed DuckDB dependency and Python standard library. Direct tool calls still make no network or model calls and need no API keys, billing account, paid service, local model, or new packages. The separately implemented local Agent calls the installed Ollama model over loopback using existing `requests`.
 
 Tests use isolated temporary warehouses and a controlled freshness clock. They cover all four tools, matching existing KPIs, argument limits, schema metadata, parameter binding, blocked SQL/private operations, empty/missing results, incomplete and stale data, earlier quality warnings, future extraction times, strict JSON, and unchanged database bytes under read-only calls. The existing ingestion, warehouse, and analytics suites also run.
