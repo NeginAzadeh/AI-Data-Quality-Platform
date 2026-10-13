@@ -53,20 +53,20 @@ Both latest ingestion context and contributing observation-run context are retai
 
 ## Planned downstream pipeline (not implemented)
 
-The data-access foundation for a future AI Agent is now implemented separately from model integration; see below. The agent reasoning loop itself remains planned.
+The read-only local Ollama Agent is implemented separately from its data tools; see below. Broader investigation workflows and dashboards remain planned.
 
 ```text
 Existing warehouse and SQL KPI report
   -> dbt-managed transformations
-  -> Dashboard and AI Agent
+  -> Dashboard and expanded Agent workflows
 ```
 
-The dashboard would present defined metrics. A future AI Agent would call the tested tools to retrieve evidence, state its limits, and suggest questions for investigation. No dashboard or model reasoning loop is implemented.
+The dashboard would present defined metrics. Expanded agent workflows would require more evaluation and evidence sources. No dashboard is implemented; the current local assistant only calls the four existing tools.
 
 ## Implemented agent tool foundation
 
 ```text
-Trusted local caller (future LLM proposes name and JSON arguments)
+Trusted local caller (or local Ollama model proposes name and JSON arguments)
   -> tool_schemas.py + AgentTools.call_tool allowlist and runtime validation
   -> Four fixed operations in agent_tools.py
   -> Read-only DuckDB connection + existing checked-in analytics SQL
@@ -79,13 +79,38 @@ Each call opens a read-only connection and uses one transaction for context and 
 
 PR age stays reproducible at extraction. Source freshness is separately checked against an explicit current UTC timestamp and a 24-hour threshold. Latest ingestion metadata and contributing PR-run metadata are both exposed, so a recent failed attempt or clean later run cannot hide old observations or previous quality issues. Unknown metadata stays unknown. These tools never verify live GitHub status or infer review activity, root causes, or developer performance.
 
-Schemas are provider-neutral metadata for a later model adapter. No model SDK, paid service, credentials, billing dependency, agent loop, or network request is introduced. See [the agent tools guide](agent_tools.md).
+Schemas remain provider-neutral. The local Agent wraps them in Ollama's native function format. The tools themselves make no network requests. See [the agent tools guide](agent_tools.md).
+
+## Implemented local Agent
+
+```text
+Interactive CLI question
+  -> local_agent.py: system policy + four Ollama function schemas
+  -> POST http://127.0.0.1:11434/api/chat (qwen3:4b-instruct)
+  -> Native assistant tool_calls
+  -> Validate shape -> AgentTools.call_tool -> read-only DuckDB
+  -> JSON tool messages marked as untrusted data
+  -> Next local model turn (bounded loop)
+  -> Model answer checks + application-rendered evidence/limits
+```
+
+The model chooses operations, arguments, and phrasing. Python controls access, schemas, budgets, failures, and tool execution. The default cap stays at 4 tool-call rounds and 4 calls per round. Up to 2 evidence-recovery reminders can add model requests, for a hard default total of 7 (`max_rounds + 1 + max_recoveries`). Malformed attempts consume the tool-round budget. Multiple requests within a batch execute sequentially.
+
+The Ollama adapter describes the existing KPI fields, including median/average merge hours, without modifying the original schemas or tools. Repository identifiers are extracted and validated from the user question, never from source data. Before accepting a draft, the application requires successful evidence for each named repository; recognized analytics intents additionally require the KPI operation for each. Missing evidence triggers a bounded reminder, and only the model's subsequent native calls can execute. Failed or not-found calls do not satisfy coverage. Repository extraction and analytics intent detection are conservative heuristics, not complete natural-language understanding.
+
+Structured trace events distinguish requests, native call counts, no-call responses, malformed calls, error codes, missing evidence, recovery, and final status. Diagnostics include available Ollama stop reason and token counts. Premature prose is discarded rather than replayed as authority; recovery messages use only validated user-scope identifiers and fixed instructions.
+
+The same two-attempt recovery budget can correct a rejected final draft. That phase removes available tools, permits no new tool execution, and asks for a rewrite from existing evidence. A narrow check rejects claims that distinct repository extraction ranges share one timestamp. This supplements, rather than replaces, the evidence appendix and the limitations of free-form prose checks.
+
+Only native structured calls execute; apparent code in generated text or PR titles is never interpreted. Tool outputs cannot become system messages. All retrieved text is untrusted. Proxy routing and redirects are disabled; the model/endpoint are fixed to the tested local configuration. No model SDK, paid API, API key, or framework is introduced.
+
+Answers without successful tool evidence are withheld. Unreturned URLs, certain explicit current-status claims, and executable code blocks are also withheld. Python always adds returned PR references, observation times, and available quality/freshness warnings. These checks are not a semantic proof of every sentence; generated prose must still be reviewed against source evidence. See [the local Agent guide](local_agent.md) for evaluation and operational limits.
 
 Airflow would coordinate tasks; Docker would package their runtime. GCP would host cloud resources, Terraform would define infrastructure, and CI/CD would automate checks and later delivery. Specific services, metric definitions, and deployment design remain undecided.
 
 ## Folder responsibilities
 
-- `src/engineering_intelligence/`: ingestion, warehouse, reports, and bounded agent tools/schemas.
+- `src/engineering_intelligence/`: pipeline, reports, agent tools/schemas, and local Ollama loop/CLI.
 - `sql/analytics/`: PR calculations and repository KPI queries.
 - `tests/`: mocked API tests and isolated DuckDB warehouse/analytics tests.
 - `archive/weather_poc/`: preserved and runnable learning example.
@@ -94,4 +119,4 @@ Airflow would coordinate tasks; Docker would package their runtime. GCP would ho
 - `data/reports/`: generated KPI JSON, excluded from version control.
 - `docs/`: design documentation.
 
-Data and `.venv/` remain local through `.gitignore`. GitHub ingestion, basic Data Quality checks, the warehouse, observed-cohort KPIs, and tested agent data tools are implemented. Model integration, dbt, dashboards, scheduling, and cloud infrastructure remain planned.
+Data and `.venv/` remain local through `.gitignore`. Ingestion, quality checks, warehouse, KPIs, agent tools, and local Ollama integration are implemented. dbt, dashboards, scheduling, cloud infrastructure, and broader Agent workflows remain planned.

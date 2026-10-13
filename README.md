@@ -19,10 +19,11 @@ Engineering teams need reliable information about how work moves from pull reque
 - SQL analytics under `sql/analytics/` calculates repository-level observed PR counts, state breakdowns, merge rate, average/median time to merge, and open PR ages at each PR's extraction time, including counts older than 7 days.
 - `report_kpis.py` reads the warehouse without modifying it, displays KPIs, and exports timestamped JSON under `data/reports/` with per-PR open ages, units/definitions, and ingestion completeness/error context. Controlled DuckDB tests check known results and edge cases.
 - Four read-only agent data tools retrieve repository KPIs, bounded lists of observed stale open PRs with GitHub links, stored PR details, and data-quality/freshness status. Tool responses include observation timestamps, provenance, and limitations.
-- Provider-neutral function schemas and an allowlisted dispatcher validate arguments and reject arbitrary SQL, unknown tool names, and unexpected fields. No LLM is connected; the tools use the existing local DuckDB dependency and make no API calls.
+- Provider-neutral function schemas and an allowlisted dispatcher validate arguments and reject arbitrary SQL, unknown tool names, and unexpected fields. The data tools use local DuckDB and make no API calls.
+- A fully local Ollama agent uses `qwen3:4b-instruct`, native function calling, bounded sequential tool rounds, and an interactive CLI. It uses existing `requests` and `AgentTools`, with no paid services, model SDK, API keys, or new packages.
 - Archived weather proof of concept: fetch Turin hourly temperatures and load them into DuckDB without duplicate timestamps. The scripts in `archive/weather_poc/` still use the existing project-level data files.
 
-GitHub ingestion is a snapshot, not complete history. Page-limited snapshots are explicitly incomplete, and the warehouse preserves that status. Even when pagination is exhausted, PRs can change during extraction and this endpoint does not provide every historical PR event. The warehouse stores current observed PR values, not every change over time. KPIs describe this observed, potentially incomplete cohort; they are not full-repository performance statistics or developer productivity rankings. No AI agent is implemented yet.
+GitHub ingestion is a snapshot, not complete history. Page-limited snapshots are explicitly incomplete, and the warehouse preserves that status. Even when pagination is exhausted, PRs can change during extraction and this endpoint does not provide every historical PR event. The warehouse stores current observed PR values, not every change over time. KPIs describe this observed, potentially incomplete cohort; they are not full-repository performance statistics or developer productivity rankings. The local Agent retrieves these observations and answers with evidence; generated prose still needs checking against that evidence.
 
 ## Run locally
 
@@ -63,7 +64,37 @@ Call a tool locally without a model or network access:
 .\.venv\Scripts\python.exe -c "import json; from src.engineering_intelligence.agent_tools import AgentTools; print(json.dumps(AgentTools().call_tool('list_stale_open_prs', {'repository': 'dbt-labs/dbt-core', 'min_age_days': 7, 'limit': 5}), indent=2))"
 ```
 
-The tool list uses an inclusive age threshold (`>=`); the existing KPI for older than 7 days remains strict (`>`). Both use age at each PR's extraction, not age today. Source freshness is a separate checked-at-time measure with a documented 24-hour threshold. An empty result means no matching local observations, not verified absence on GitHub. Existing ingestion, warehouse, analytics, and archived code are preserved. No paid services, model dependencies, or billing requirements are introduced.
+The tool list uses an inclusive age threshold (`>=`); the existing KPI for older than 7 days remains strict (`>`). Both use age at each PR's extraction, not age today. Source freshness is a separate checked-at-time measure with a documented 24-hour threshold. An empty result means no matching local observations, not verified absence on GitHub. Existing ingestion, warehouse, analytics, and archived code are preserved.
+
+## Local Ollama Agent
+
+Use the installed Ollama application and existing locally downloaded `qwen3:4b-instruct`. Verify that Ollama is running and `ollama list` includes that exact tag. If the server is not running, start Ollama or run `ollama serve` in another terminal. The app does not download a model or contact a cloud provider.
+
+From the project root, start the interactive interface:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.engineering_intelligence.local_agent --trace
+```
+
+Ask a self-contained question with a repository, such as: `Show two PRs observed open in dbt-labs/dbt-core with age at least 7 days, their links, observation times, and data-quality warnings.` Type `exit` or `quit` to finish. Each question starts a fresh conversation.
+
+For one question:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.engineering_intelligence.local_agent --question "What are the observed KPIs for apache/airflow? Explain the data limitations." --trace
+```
+
+The endpoint is fixed to `http://127.0.0.1:11434/api/chat`; proxies and redirects are disabled. The default is 4 tool-call rounds, with at most 4 calls per round. `--max-rounds` accepts 1 through 8. A bounded extra response request lets the model summarize after reaching its tool budget. Malformed/unknown tool requests produce error feedback; no text-to-code fallback exists. Python adds an evidence appendix independently of the model.
+
+Natural repository comparisons do not need internal function names. The Ollama adapter explicitly describes available KPI fields, and the prompt asks for evidence from every named repository. Before accepting an answer, Python checks repository coverage and, for recognized metric questions, successful KPI coverage. A shared budget of up to two recovery reminders covers missing evidence and rejected answer drafts. Evidence recovery requests native calls; answer correction disables tools and uses existing evidence. Neither silently executes a query. The default maximum is seven model requests (`max_rounds + 1 + 2`), while the four-round tool cap stays unchanged.
+
+`--trace` shows model requests, `no_tool_calls`, proposed calls, malformed calls, tool errors/successes, missing evidence, recovery/answer-recovery attempts, and final status. For example:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.engineering_intelligence.local_agent --question "Between apache/airflow and dbt-labs/dbt-core, which has the higher median merge time? Explain the data limitations." --trace
+```
+
+See [the local Agent guide](docs/local_agent.md) for setup, loop architecture, security boundaries, limitations, and evaluation. Automated tests need no running Ollama. Real smoke tests used the installed Ollama 0.40.2/model and verified native tool selection, including a two-round list-then-inspect workflow. No commits or pushes are performed by the Agent.
 
 The analytics script needs an existing warehouse with both tables. A valid empty warehouse produces an empty report; a repository with a run but no PRs has zero counts and unavailable (`null`) rates/durations. Generation time labels the output file only; it never affects open ages. `data/reports/` is excluded from Git, and reporting does not call GitHub or change raw snapshots, ingestion code, or warehouse tables.
 
@@ -81,7 +112,7 @@ Fetching weather again overwrites its raw JSON; loading reuses the database. Git
 | Component | Intended purpose |
 | --- | --- |
 | Dashboard | Present engineering metrics and trends |
-| AI Agent | Explain patterns and suggest investigations using validated data |
+| Expanded agent workflows | Broader evaluation and carefully scoped investigation features beyond the local read-only assistant |
 | GCP | Host cloud storage and pipeline workloads |
 | Airflow | Schedule and coordinate pipeline tasks |
 | dbt | Build documented and tested SQL transformations |
@@ -95,7 +126,7 @@ This is a learning roadmap, not an implemented production system. Exact cloud se
 
 ```text
 archive/weather_poc/          Preserved, runnable weather scripts
-src/engineering_intelligence/ Ingestion, warehouse, KPI reporter, and agent tools/schemas
+src/engineering_intelligence/ Pipeline, KPI reporter, agent tools/schemas, and local Agent
 sql/analytics/              Shared PR calculations and SQL report queries
 tests/                      Ingestion, warehouse, and analytics tests
 docs/                       Architecture, warehouse, and analytics guides
